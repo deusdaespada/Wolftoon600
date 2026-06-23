@@ -5,24 +5,28 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { useTitleOptions } from '@/hooks/useTitleOptions';
 import { useCreateChapter } from '@/hooks/useChapters';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Upload, ArrowLeft, Layers, Trash2, Plus, FileText, Image as ImageIcon,
-  FolderOpen, CheckCircle2, XCircle, X, FileArchive, Loader2, Info, Eye, EyeOff, Search
+  Upload, ArrowLeft, Layers, Trash2, Plus, Image as ImageIcon,
+  FolderOpen, CheckCircle2, XCircle, X, Loader2, Info, Eye, EyeOff,
+  Search, RefreshCw, ChevronDown, ChevronUp, Crown, AlertTriangle,
 } from 'lucide-react';
 import { uploadImagesToChapterBucket, extractSortableNumber } from '@/lib/chapterUpload';
 import { supabase } from '@/integrations/supabase/client';
 import JSZip from 'jszip';
 import { toLocalDatetimeInput, localDatetimeToIso, parseLocalDatetimeInput } from '@/lib/datetime';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type UploadStatus = 'pending' | 'uploading' | 'success' | 'error';
 
 interface ChapterData {
   id: string;
@@ -32,11 +36,21 @@ interface ChapterData {
   content: string;
   content_type: 'images' | 'novel';
   is_vip: boolean;
-  vip_unlock_at: string; // datetime-local string
+  vip_unlock_at: string;
   isUploading: boolean;
   uploadProgress: number;
-  uploadStatus: 'pending' | 'uploading' | 'success' | 'error';
+  uploadStatus: UploadStatus;
+  sourceFiles?: File[];   // kept for retry
+  expanded: boolean;
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const extractNumbers = (str: string): number => extractSortableNumber(str);
+
+const isImageFile = (name: string) => /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(name);
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const BatchChapterUpload = () => {
   const { user, isAdmin, loading: authLoading } = useAuth();
@@ -51,20 +65,25 @@ const BatchChapterUpload = () => {
   const hasTitleFromUrl = !!urlTitleId;
 
   const [titleId, setTitleId] = useState(preselectedTitleId);
-  const [contentType, setContentType] = useState<'images' | 'novel'>('images');
+  const [contentType] = useState<'images' | 'novel'>('images');
   const [chapters, setChapters] = useState<ChapterData[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  const [showAllPreviews, setShowAllPreviews] = useState(false);
   const [batchTitleSearch, setBatchTitleSearch] = useState('');
+  const [isProcessingZip, setIsProcessingZip] = useState(false);
 
   const mainFolderInputRef = useRef<HTMLInputElement | null>(null);
+  const zipInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ── Auth guards ─────────────────────────────────────────────────────────────
 
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background">
         <Header />
-        <div className="container mx-auto px-4 py-16 text-center">
+        <div className="container mx-auto px-4 py-16 flex items-center justify-center gap-3">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           <p className="text-muted-foreground">Carregando...</p>
         </div>
       </div>
@@ -76,7 +95,10 @@ const BatchChapterUpload = () => {
       <div className="min-h-screen bg-background">
         <Header />
         <div className="container mx-auto px-4 py-16 text-center">
-          <h1 className="font-display text-2xl sm:text-3xl font-bold mb-4">Acesso Negado</h1>
+          <div className="inline-flex p-4 rounded-2xl bg-destructive/10 mb-6">
+            <XCircle className="h-8 w-8 text-destructive" />
+          </div>
+          <h1 className="font-display text-2xl font-bold mb-3">Acesso Negado</h1>
           <p className="text-muted-foreground mb-6">Você precisa ser administrador para acessar esta página.</p>
           <Button onClick={() => navigate('/')}>Voltar ao Início</Button>
         </div>
@@ -84,68 +106,97 @@ const BatchChapterUpload = () => {
     );
   }
 
-  const extractNumbers = (str: string): number => {
-    return extractSortableNumber(str);
-  };
+  // ── Chapter state helpers ────────────────────────────────────────────────────
 
-  const removeChapter = (id: string) => {
-    setChapters(chapters.filter(c => c.id !== id));
-  };
+  const removeChapter = (id: string) =>
+    setChapters(prev => prev.filter(c => c.id !== id));
 
-  const updateChapter = (id: string, updates: Partial<ChapterData>) => {
-    setChapters(chapters.map(c => c.id === id ? { ...c, ...updates } : c));
-  };
+  const updateChapter = (id: string, updates: Partial<ChapterData>) =>
+    setChapters(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
 
-  const removeImage = (chapterId: string, imageIndex: number) => {
-    const chapter = chapters.find(c => c.id === chapterId);
-    if (chapter) {
-      const newImages = chapter.images.filter((_, i) => i !== imageIndex);
-      updateChapter(chapterId, { images: newImages });
+  const removeImage = (chapterId: string, imageIndex: number) =>
+    setChapters(prev => prev.map(c =>
+      c.id === chapterId ? { ...c, images: c.images.filter((_, i) => i !== imageIndex) } : c
+    ));
+
+  // ── Upload images for one chapter ───────────────────────────────────────────
+
+  const uploadImagesForChapter = async (chapterId: string, files: File[]) => {
+    const sorted = [...files].sort((a, b) => extractNumbers(a.name) - extractNumbers(b.name));
+
+    setChapters(prev => prev.map(c =>
+      c.id === chapterId
+        ? { ...c, isUploading: true, uploadStatus: 'uploading', uploadProgress: 0, sourceFiles: sorted }
+        : c
+    ));
+
+    try {
+      const uploaded = await uploadImagesToChapterBucket(sorted, {
+        batchSize: 6,
+        onProgress: (progress) =>
+          setChapters(prev => prev.map(c => c.id === chapterId ? { ...c, uploadProgress: progress } : c)),
+      });
+
+      const urls = uploaded
+        .sort((a, b) => a.order - b.order || a.sourceName.localeCompare(b.sourceName))
+        .map(img => img.url);
+
+      setChapters(prev => prev.map(c =>
+        c.id === chapterId
+          ? { ...c, images: urls, isUploading: false, uploadStatus: 'success', uploadProgress: 100 }
+          : c
+      ));
+    } catch {
+      setChapters(prev => prev.map(c =>
+        c.id === chapterId
+          ? { ...c, isUploading: false, uploadStatus: 'error', uploadProgress: 0 }
+          : c
+      ));
     }
   };
 
-  // Process folder with multiple chapter subfolders
+  // ── Process folder input ─────────────────────────────────────────────────────
+
   const processMainFolder = async (files: FileList) => {
     const fileArray = Array.from(files);
-    
-    // Group files by their parent folder (chapter folder)
+
+    // Group images by chapter subfolder
     const folderMap = new Map<string, File[]>();
-    
     fileArray.forEach(file => {
-      // The webkitRelativePath gives us "MainFolder/ChapterFolder/image.jpg"
-      const pathParts = file.webkitRelativePath.split('/');
-      
-      if (pathParts.length >= 2) {
-        // Get the chapter folder name (second level)
-        const chapterFolder = pathParts.length >= 3 ? pathParts[1] : pathParts[0];
-        
-        // Only add image files
-        if (/\.(jpg|jpeg|png|gif|webp|avif)$/i.test(file.name)) {
-          if (!folderMap.has(chapterFolder)) {
-            folderMap.set(chapterFolder, []);
-          }
-          folderMap.get(chapterFolder)!.push(file);
-        }
-      }
+      const parts = file.webkitRelativePath.split('/');
+      if (parts.length < 2) return;
+      const chapterFolder = parts.length >= 3 ? parts[1] : parts[0];
+      if (!isImageFile(file.name)) return;
+      if (!folderMap.has(chapterFolder)) folderMap.set(chapterFolder, []);
+      folderMap.get(chapterFolder)!.push(file);
     });
 
     if (folderMap.size === 0) {
       toast({
         title: 'Nenhuma pasta de capítulo encontrada',
-        description: 'Certifique-se de selecionar uma pasta que contenha subpastas com imagens.',
+        description: 'Selecione uma pasta que contenha subpastas com imagens.',
         variant: 'destructive',
       });
       return;
     }
 
-    // Create chapters from folders
-    const newChapters: ChapterData[] = [];
-    
-    folderMap.forEach((files, folderName) => {
-      const chapterNumber = extractNumbers(folderName) || newChapters.length + 1;
-      
-      newChapters.push({
-        id: crypto.randomUUID(),
+    // Build chapter records with stable IDs mapped to folder names
+    const folderEntries = [...folderMap.entries()].sort(
+      ([a], [b]) => extractNumbers(a) - extractNumbers(b)
+    );
+
+    // Resolve starting chapter number to avoid collisions with existing chapters
+    const existingMax = chapters.length > 0 ? Math.max(...chapters.map(c => c.chapter_number)) : -1;
+    let autoNumber = existingMax + 1;
+
+    const idByFolder = new Map<string, string>();
+    const newChapters: ChapterData[] = folderEntries.map(([folderName]) => {
+      const parsed = extractNumbers(folderName);
+      const chapterNumber = parsed > 0 ? parsed : autoNumber++;
+      const id = crypto.randomUUID();
+      idByFolder.set(folderName, id);
+      return {
+        id,
         chapter_number: chapterNumber,
         chapter_title: '',
         images: [],
@@ -156,214 +207,228 @@ const BatchChapterUpload = () => {
         isUploading: false,
         uploadProgress: 0,
         uploadStatus: 'pending',
-      });
+        expanded: false,
+      };
     });
 
-    // Sort chapters by number
-    newChapters.sort((a, b) => a.chapter_number - b.chapter_number);
-    
-    // Add chapters to state
     setChapters(prev => [...prev, ...newChapters]);
 
     toast({
-      title: `${newChapters.length} capítulos detectados`,
-      description: 'Iniciando upload das imagens...',
+      title: `${newChapters.length} capítulo(s) detectado(s)`,
+      description: 'Fazendo upload das imagens...',
     });
 
-    // Upload images for each chapter
-    let chapterIndex = chapters.length;
-    for (const [folderName, files] of folderMap) {
-      const chapterNumber = extractNumbers(folderName) || 1;
-      const chapter = newChapters.find(c => c.chapter_number === chapterNumber);
-      
-      if (chapter) {
-        await uploadImagesForChapter(chapter.id, files, newChapters);
-      }
-      chapterIndex++;
+    // Upload in parallel (capped) — use idByFolder for stable lookup
+    for (const [folderName, files] of folderEntries) {
+      const id = idByFolder.get(folderName)!;
+      await uploadImagesForChapter(id, files);
     }
   };
 
-  const uploadImagesForChapter = async (chapterId: string, files: File[], currentChapters: ChapterData[]) => {
-    const sortedFiles = [...files].sort((a, b) => extractNumbers(a.name) - extractNumbers(b.name));
+  // ── Process ZIP file ─────────────────────────────────────────────────────────
 
-    setChapters(prev => prev.map(c =>
-      c.id === chapterId
-        ? { ...c, isUploading: true, uploadStatus: 'uploading', uploadProgress: 0 }
-        : c
-    ));
-
+  const processZipFile = async (file: File) => {
+    setIsProcessingZip(true);
     try {
-      const uploadedImages = await uploadImagesToChapterBucket(sortedFiles, {
-        batchSize: 6,
-        onProgress: (progress) => {
-          setChapters(prev => prev.map(c =>
-            c.id === chapterId ? { ...c, uploadProgress: progress } : c
-          ));
-        },
+      const zip = await JSZip.loadAsync(file);
+      const folderMap = new Map<string, { name: string; blob: Blob }[]>();
+
+      const tasks: Promise<void>[] = [];
+      zip.forEach((relativePath, entry) => {
+        if (entry.dir) return;
+        const parts = relativePath.split('/').filter(Boolean);
+        if (parts.length < 2) return;
+        const chapterFolder = parts[0];
+        const fileName = parts[parts.length - 1];
+        if (!isImageFile(fileName)) return;
+
+        tasks.push(
+          entry.async('blob').then(blob => {
+            if (!folderMap.has(chapterFolder)) folderMap.set(chapterFolder, []);
+            folderMap.get(chapterFolder)!.push({ name: fileName, blob });
+          })
+        );
       });
 
-      const finalUrls = uploadedImages
-        .sort((a, b) => a.order - b.order || a.sourceName.localeCompare(b.sourceName))
-        .map((image) => image.url);
+      await Promise.all(tasks);
 
-      setChapters(prev => prev.map(c =>
-        c.id === chapterId
-          ? { ...c, images: finalUrls, isUploading: false, uploadStatus: 'success', uploadProgress: 100 }
-          : c
-      ));
+      if (folderMap.size === 0) {
+        toast({ title: 'ZIP sem imagens', description: 'Nenhuma imagem encontrada dentro de subpastas.', variant: 'destructive' });
+        return;
+      }
 
-    } catch (error: any) {
-      setChapters(prev => prev.map(c =>
-        c.id === chapterId
-          ? { ...c, isUploading: false, uploadStatus: 'error', uploadProgress: 0 }
-          : c
-      ));
+      const folderEntries = [...folderMap.entries()].sort(([a], [b]) => extractNumbers(a) - extractNumbers(b));
+      const existingMax = chapters.length > 0 ? Math.max(...chapters.map(c => c.chapter_number)) : -1;
+      let autoNumber = existingMax + 1;
+
+      const idByFolder = new Map<string, string>();
+      const newChapters: ChapterData[] = folderEntries.map(([folderName]) => {
+        const parsed = extractNumbers(folderName);
+        const chapterNumber = parsed > 0 ? parsed : autoNumber++;
+        const id = crypto.randomUUID();
+        idByFolder.set(folderName, id);
+        return {
+          id,
+          chapter_number: chapterNumber,
+          chapter_title: '',
+          images: [],
+          content: '',
+          content_type: 'images',
+          is_vip: false,
+          vip_unlock_at: '',
+          isUploading: false,
+          uploadProgress: 0,
+          uploadStatus: 'pending',
+          expanded: false,
+        };
+      });
+
+      setChapters(prev => [...prev, ...newChapters]);
+      toast({ title: `${newChapters.length} capítulo(s) no ZIP`, description: 'Fazendo upload das imagens...' });
+
+      for (const [folderName, items] of folderEntries) {
+        const id = idByFolder.get(folderName)!;
+        const files = items
+          .sort((a, b) => extractNumbers(a.name) - extractNumbers(b.name))
+          .map(({ name, blob }) => {
+            const ext = name.split('.').pop() || 'jpg';
+            const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+            return new File([blob], name, { type: mime });
+          });
+        await uploadImagesForChapter(id, files);
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao ler ZIP', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsProcessingZip(false);
     }
   };
 
+  // ── Retry failed chapter ─────────────────────────────────────────────────────
+
+  const retryChapter = async (chapter: ChapterData) => {
+    if (!chapter.sourceFiles?.length) return;
+    await uploadImagesForChapter(chapter.id, chapter.sourceFiles);
+  };
+
+  // ── File input handlers ──────────────────────────────────────────────────────
+
   const handleMainFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      await processMainFolder(files);
-    }
-    // Reset input
+    if (e.target.files?.length) await processMainFolder(e.target.files);
+    if (e.target) e.target.value = '';
+  };
+
+  const handleZipSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) await processZipFile(file);
     if (e.target) e.target.value = '';
   };
 
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
-    
-    // Note: drag and drop doesn't support folder structure, show message
-    toast({
-      title: 'Use o botão de seleção',
-      description: 'Arraste e solte não suporta estrutura de pastas. Clique na área para selecionar a pasta principal.',
-      variant: 'default',
-    });
+    const items = e.dataTransfer.files;
+    if (!items?.length) return;
+    const firstFile = items[0];
+    if (firstFile?.name.endsWith('.zip')) {
+      await processZipFile(firstFile);
+    } else {
+      toast({
+        title: 'Arraste um arquivo ZIP',
+        description: 'Para drag-and-drop, use um arquivo .zip com as subpastas de capítulos.',
+      });
+    }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragOver(false);
-  };
+  // ── Submit all ───────────────────────────────────────────────────────────────
 
   const handleSubmitAll = async () => {
     if (!titleId) {
-      toast({
-        title: 'Selecione um título',
-        description: 'Você precisa selecionar um título antes de enviar.',
-        variant: 'destructive',
-      });
+      toast({ title: 'Selecione um título', variant: 'destructive' });
       return;
     }
 
-    const validChapters = chapters.filter(c => 
+    const valid = chapters.filter(c =>
       contentType === 'images' ? c.images.length > 0 : c.content.trim().length > 0
     );
-    
-    if (validChapters.length === 0) {
+
+    if (valid.length === 0) {
+      toast({ title: 'Nenhum capítulo com conteúdo', variant: 'destructive' });
+      return;
+    }
+
+    // Duplicate check in batch
+    const nums = valid.map(c => c.chapter_number);
+    const dupes = nums.filter((n, i) => nums.indexOf(n) !== i);
+    if (dupes.length) {
       toast({
-        title: 'Nenhum capítulo válido',
-        description: contentType === 'images' 
-          ? 'Adicione imagens em pelo menos um capítulo.'
-          : 'Adicione conteúdo em pelo menos um capítulo.',
+        title: 'Números duplicados no lote',
+        description: `Capítulos repetidos: ${[...new Set(dupes)].join(', ')}`,
         variant: 'destructive',
       });
       return;
     }
 
-    // Check for duplicate chapter numbers in the batch
-    const chapterNumbers = validChapters.map(c => c.chapter_number);
-    const duplicatesInBatch = chapterNumbers.filter((num, index) => chapterNumbers.indexOf(num) !== index);
-    
-    if (duplicatesInBatch.length > 0) {
-      toast({
-        title: 'Capítulos duplicados detectados',
-        description: `Os capítulos ${[...new Set(duplicatesInBatch)].join(', ')} estão duplicados no lote.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    // Check for existing chapters in the database
-    const { data: existingChapters } = await supabase
+    // Duplicate check in DB
+    const { data: existing } = await supabase
       .from('chapters')
       .select('chapter_number')
       .eq('title_id', titleId)
-      .in('chapter_number', chapterNumbers);
+      .in('chapter_number', nums);
 
-    if (existingChapters && existingChapters.length > 0) {
-      const existingNumbers = existingChapters.map(c => c.chapter_number);
+    if (existing?.length) {
       toast({
-        title: 'Capítulos já existem',
-        description: `Os capítulos ${existingNumbers.join(', ')} já existem para este título.`,
+        title: 'Capítulos já existem no banco',
+        description: `Já cadastrados: ${existing.map(c => c.chapter_number).join(', ')}`,
         variant: 'destructive',
       });
       return;
     }
 
-    // Validate VIP unlock dates not in the past
-    const invalidUnlock = validChapters.find((c) => {
+    // VIP date validation
+    const badVip = valid.find(c => {
       if (!c.is_vip || !c.vip_unlock_at) return false;
       const d = parseLocalDatetimeInput(c.vip_unlock_at);
       return !d || d.getTime() <= Date.now();
     });
-    if (invalidUnlock) {
+    if (badVip) {
       toast({
         title: 'Data de desbloqueio inválida',
-        description: `Capítulo ${invalidUnlock.chapter_number}: a data deve estar no futuro. Deixe vazio para VIP permanente.`,
+        description: `Cap. ${badVip.chapter_number}: a data deve ser futura ou deixada vazia.`,
         variant: 'destructive',
       });
       return;
     }
 
     setIsProcessing(true);
-
     try {
-      for (const chapter of validChapters) {
+      for (const c of valid) {
         await createChapter.mutateAsync({
           title_id: titleId,
-          chapter_number: chapter.chapter_number,
-          chapter_title: chapter.chapter_title,
-          images: chapter.images,
+          chapter_number: c.chapter_number,
+          chapter_title: c.chapter_title,
+          images: c.images,
           content_type: contentType,
-          content: contentType === 'novel' ? chapter.content : null,
-          is_vip: chapter.is_vip,
-          vip_unlock_at: chapter.is_vip && chapter.vip_unlock_at
-            ? localDatetimeToIso(chapter.vip_unlock_at)
-            : null,
+          content: contentType === 'novel' ? c.content : null,
+          is_vip: c.is_vip,
+          vip_unlock_at: c.is_vip && c.vip_unlock_at ? localDatetimeToIso(c.vip_unlock_at) : null,
         } as any);
       }
 
-      toast({
-        title: 'Capítulos criados!',
-        description: `${validChapters.length} capítulos foram adicionados.`,
-      });
-
+      toast({ title: `${valid.length} capítulo(s) publicado(s)!` });
       navigate(-1);
-    } catch (error: any) {
-      toast({
-        title: 'Erro ao criar capítulos',
-        description: error.message,
-        variant: 'destructive',
-      });
+    } catch (err: any) {
+      toast({ title: 'Erro ao publicar', description: err.message, variant: 'destructive' });
     } finally {
       setIsProcessing(false);
     }
   };
 
   const addManualChapter = () => {
-    const lastNumber = chapters.length > 0 
-      ? Math.max(...chapters.map(c => c.chapter_number)) + 1 
-      : 0; // Start from 0 to support chapter 0
-    
-    setChapters([...chapters, {
+    const next = chapters.length > 0 ? Math.max(...chapters.map(c => c.chapter_number)) + 1 : 0;
+    setChapters(prev => [...prev, {
       id: crypto.randomUUID(),
-      chapter_number: lastNumber,
+      chapter_number: next,
       chapter_title: '',
       images: [],
       content: '',
@@ -373,116 +438,119 @@ const BatchChapterUpload = () => {
       isUploading: false,
       uploadProgress: 0,
       uploadStatus: 'pending',
+      expanded: true,
     }]);
   };
 
+  // ── Derived state ────────────────────────────────────────────────────────────
+
   const selectedTitle = titles?.find(t => t.id === titleId);
-  const validChaptersCount = chapters.filter(c => 
+  const validCount = chapters.filter(c =>
     contentType === 'images' ? c.images.length > 0 : c.content.trim().length > 0
   ).length;
   const isAnyUploading = chapters.some(c => c.isUploading);
+  const successCount = chapters.filter(c => c.uploadStatus === 'success').length;
+  const errorCount = chapters.filter(c => c.uploadStatus === 'error').length;
+  const overallProgress = chapters.length > 0
+    ? Math.round((chapters.reduce((sum, c) => sum + (c.uploadStatus === 'success' ? 100 : c.uploadProgress), 0) / (chapters.length * 100)) * 100)
+    : 0;
+
+  const filteredTitles = (titles || []).filter(t =>
+    !batchTitleSearch.trim() || t.title.toLowerCase().includes(batchTitleSearch.toLowerCase())
+  );
+
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pb-32">
       <Header />
 
-      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-8 max-w-4xl">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-6 sm:mb-8">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="self-start">
+      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-8 max-w-3xl">
+
+        {/* ── Page header ── */}
+        <div className="flex items-center gap-3 mb-6">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="shrink-0">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 sm:p-3 rounded-xl bg-primary/10">
-              <Layers className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2.5 rounded-xl bg-primary/10 shrink-0">
+              <Layers className="h-5 w-5 text-primary" />
             </div>
-            <div>
-              <h1 className="font-display text-xl sm:text-2xl lg:text-3xl font-bold">Upload em Massa</h1>
+            <div className="min-w-0">
+              <h1 className="font-display text-xl sm:text-2xl font-bold leading-tight">Upload em Massa</h1>
               {selectedTitle && (
-                <p className="text-sm text-muted-foreground">Para: {selectedTitle.title}</p>
+                <p className="text-xs text-muted-foreground truncate">→ {selectedTitle.title}</p>
               )}
             </div>
           </div>
         </div>
 
-        {/* Instructions */}
-        <Alert className="mb-6 bg-card border-border">
-          <Info className="h-4 w-4" />
-          <AlertDescription className="text-sm space-y-1">
-            <p className="font-medium">Como funciona o upload em massa:</p>
-            <ol className="list-decimal list-inside space-y-0.5 text-muted-foreground">
-              <li>Organize seus capítulos em pastas separadas numeradas</li>
-              <li>O nome da pasta será usado como número do capítulo (ex: "01", "1.5", "10")</li>
-              <li>As imagens dentro de cada pasta devem estar numeradas em ordem (ex: "01.jpg", "02.jpg")</li>
-              <li>Selecione a pasta principal que contém todas as pastas de capítulos</li>
-              <li>Revise e ajuste os números/títulos antes de enviar</li>
-            </ol>
+        {/* ── Instructions ── */}
+        <Alert className="mb-5 bg-muted/40 border-border/50">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <AlertDescription className="text-sm">
+            <span className="font-medium block mb-1">Estrutura esperada:</span>
+            <code className="text-xs text-muted-foreground font-mono leading-relaxed block">
+              📁 PastaPrincipal/<br />
+              &nbsp;&nbsp;📁 01/ → imagens do cap. 1<br />
+              &nbsp;&nbsp;📁 02/ → imagens do cap. 2<br />
+              &nbsp;&nbsp;📁 1.5/ → imagens do cap. 1.5<br />
+            </code>
           </AlertDescription>
         </Alert>
 
-        {/* Title Selection */}
+        {/* ── Title selection ── */}
         {!hasTitleFromUrl && !preselectedTitleId && (
-          <Card className="mb-6">
-            <CardContent className="p-4 sm:p-6">
-              <Label className="mb-2 block text-sm font-medium">Selecione o Título *</Label>
+          <Card className="mb-5 border-border/50">
+            <CardContent className="p-4">
+              <Label className="text-sm font-medium mb-3 block">Título *</Label>
               <div className="relative mb-2">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   placeholder="Buscar título..."
                   value={batchTitleSearch}
-                  onChange={(e) => setBatchTitleSearch(e.target.value)}
-                  className="pl-9 h-9 bg-background/50 border-border/30 rounded-lg text-sm"
+                  onChange={e => setBatchTitleSearch(e.target.value)}
+                  className="pl-8 h-9 text-sm"
                 />
               </div>
               <Select value={titleId} onValueChange={setTitleId}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger>
                   <SelectValue placeholder="Selecione o título" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(titles || []).filter(t => !batchTitleSearch.trim() || t.title.toLowerCase().includes(batchTitleSearch.toLowerCase())).map((title) => (
-                    <SelectItem key={title.id} value={title.id}>
-                      {title.title}
-                    </SelectItem>
+                  {filteredTitles.map(t => (
+                    <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
 
-              {/* Selected title manga card preview */}
               {selectedTitle && (
-                <div className="mt-4 flex items-center gap-3 p-3 bg-muted/30 rounded-lg border border-border/30">
-                  <div className="w-16 shrink-0">
-                    <div className="relative aspect-[3/4] rounded-lg overflow-hidden">
-                      <img src={selectedTitle.cover} alt={selectedTitle.title} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
-                      <div className="absolute top-1 right-1 bg-primary text-primary-foreground text-[8px] px-1 py-0.5 rounded font-semibold">
-                        {selectedTitle.type}
-                      </div>
-                    </div>
+                <div className="mt-3 flex items-center gap-3 p-3 bg-muted/30 rounded-lg border border-border/30">
+                  <div className="w-12 shrink-0 aspect-[3/4] rounded-md overflow-hidden">
+                    <img src={selectedTitle.cover} alt={selectedTitle.title} className="w-full h-full object-cover" />
                   </div>
                   <div className="min-w-0">
-                    <p className="font-semibold text-sm truncate">{selectedTitle.title}</p>
+                    <p className="font-medium text-sm truncate">{selectedTitle.title}</p>
                     <p className="text-xs text-muted-foreground">{selectedTitle.status}</p>
                   </div>
+                  <Badge variant="secondary" className="ml-auto text-xs shrink-0">{selectedTitle.type}</Badge>
                 </div>
               )}
             </CardContent>
           </Card>
         )}
 
-        {/* Main Drop Zone - Large and Prominent */}
+        {/* ── Drop zone ── */}
         <div
           onClick={() => mainFolderInputRef.current?.click()}
           onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
+          onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+          onDragLeave={() => setIsDragOver(false)}
           className={`
-            relative border-2 border-dashed rounded-2xl p-8 sm:p-12 lg:p-16 text-center 
-            transition-all cursor-pointer mb-6
-            ${isDragOver 
-              ? 'border-primary bg-primary/10 scale-[1.01]' 
-              : 'border-muted-foreground/30 hover:border-primary/50 hover:bg-accent/30'
-            }
-            ${isAnyUploading ? 'opacity-50 pointer-events-none' : ''}
+            relative border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center
+            transition-all cursor-pointer mb-3
+            ${isDragOver ? 'border-primary bg-primary/8 scale-[1.01]' : 'border-muted-foreground/25 hover:border-primary/40 hover:bg-accent/20'}
+            ${isAnyUploading || isProcessingZip ? 'opacity-50 pointer-events-none' : ''}
           `}
         >
           <input
@@ -497,225 +565,304 @@ const BatchChapterUpload = () => {
             ref={mainFolderInputRef}
             disabled={isAnyUploading}
           />
-          
-          <div className="flex flex-col items-center">
-            <div className="p-4 sm:p-6 rounded-2xl bg-muted/50 mb-4 sm:mb-6">
-              <FolderOpen className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground" />
-            </div>
-            <p className="text-lg sm:text-xl font-semibold mb-2">
-              Clique para selecionar a pasta com os capítulos
-            </p>
-            <p className="text-sm sm:text-base text-muted-foreground max-w-md">
-              Selecione a pasta principal que contém todas as sub-pastas de capítulos.
-              Cada subpasta numerada será tratada como um capítulo separado
-            </p>
-          </div>
-        </div>
 
-        {/* Add Manual Chapter Button */}
-        <div className="mb-6">
-          <Button 
-            variant="outline" 
-            onClick={addManualChapter}
-            className="w-full sm:w-auto"
-            disabled={isAnyUploading}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Adicionar Mais Capítulos
-          </Button>
-          <p className="text-xs text-muted-foreground mt-2">
-            Use este botão para adicionar capítulos de outra pasta principal ou pastas de capítulos
-          </p>
-        </div>
-
-        {/* Chapters List */}
-        {chapters.length > 0 && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <h2 className="text-lg font-semibold">
-                Capítulos Detectados ({chapters.length})
-              </h2>
-              <div className="flex gap-2">
-                <Button
-                  onClick={handleSubmitAll}
-                  disabled={isProcessing || !titleId || validChaptersCount === 0 || isAnyUploading}
-                >
-                  {isProcessing ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Upload className="h-4 w-4 mr-2" />
-                  )}
-                  Enviar {validChaptersCount} Capítulo(s)
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setShowPreview(!showPreview)}
-                  title={showPreview ? 'Esconder pré-visualização' : 'Mostrar pré-visualização'}
-                >
-                  {showPreview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
+          <div className="flex flex-col items-center gap-3">
+            {isProcessingZip ? (
+              <Loader2 className="h-12 w-12 text-primary animate-spin" />
+            ) : (
+              <div className="p-4 rounded-2xl bg-muted/50">
+                <FolderOpen className="h-10 w-10 text-muted-foreground" />
               </div>
+            )}
+            <div>
+              <p className="font-semibold text-base">
+                {isProcessingZip ? 'Processando ZIP...' : 'Selecionar pasta de capítulos'}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Clique para escolher a pasta principal ou arraste um arquivo .zip
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* ── ZIP button ── */}
+        <div className="flex gap-2 mb-6">
+          <input
+            type="file"
+            accept=".zip"
+            onChange={handleZipSelect}
+            className="hidden"
+            ref={zipInputRef}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => zipInputRef.current?.click()}
+            disabled={isAnyUploading || isProcessingZip}
+            className="text-xs"
+          >
+            <Upload className="h-3.5 w-3.5 mr-1.5" />
+            Importar ZIP
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={addManualChapter}
+            disabled={isAnyUploading}
+            className="text-xs"
+          >
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
+            Adicionar manualmente
+          </Button>
+        </div>
+
+        {/* ── Chapters list ── */}
+        {chapters.length > 0 && (
+          <>
+            {/* Summary bar */}
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium">{chapters.length} capítulo(s)</span>
+                {successCount > 0 && (
+                  <Badge variant="outline" className="text-xs text-green-600 border-green-500/40 bg-green-500/10">
+                    <CheckCircle2 className="h-3 w-3 mr-1" />{successCount} ok
+                  </Badge>
+                )}
+                {errorCount > 0 && (
+                  <Badge variant="outline" className="text-xs text-destructive border-destructive/40 bg-destructive/10">
+                    <AlertTriangle className="h-3 w-3 mr-1" />{errorCount} erro(s)
+                  </Badge>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllPreviews(v => !v)}
+                className="text-xs text-muted-foreground h-7"
+              >
+                {showAllPreviews ? <EyeOff className="h-3.5 w-3.5 mr-1" /> : <Eye className="h-3.5 w-3.5 mr-1" />}
+                {showAllPreviews ? 'Ocultar' : 'Ver'} imagens
+              </Button>
             </div>
 
-            {chapters.map((chapter) => (
-              <Card 
-                key={chapter.id} 
-                className={`
-                  transition-all
-                  ${chapter.uploadStatus === 'success' ? 'border-green-500/50' : ''}
-                  ${chapter.uploadStatus === 'error' ? 'border-destructive/50' : ''}
-                  ${chapter.isUploading ? 'border-primary/50' : ''}
-                `}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
-                    {/* Status Icon */}
-                    <div className="pt-2">
-                      {chapter.uploadStatus === 'success' && <CheckCircle2 className="h-5 w-5 text-green-500" />}
-                      {chapter.uploadStatus === 'error' && <XCircle className="h-5 w-5 text-destructive" />}
-                      {chapter.uploadStatus === 'uploading' && <Loader2 className="h-5 w-5 text-primary animate-spin" />}
-                      {chapter.uploadStatus === 'pending' && <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30" />}
-                    </div>
+            {/* Overall upload progress */}
+            {isAnyUploading && (
+              <div className="mb-4">
+                <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                  <span>Upload em andamento...</span>
+                  <span>{overallProgress}%</span>
+                </div>
+                <Progress value={overallProgress} className="h-1.5" />
+              </div>
+            )}
 
-                    {/* Chapter Info */}
-                    <div className="flex-1 space-y-3">
-                      <div className="flex flex-col sm:flex-row gap-3">
-                        <div className="w-full sm:w-32">
-                          <Label className="text-xs text-muted-foreground mb-1 block">Número do Capítulo</Label>
-                          <Input
-                            type="text"
-                            value={chapter.chapter_number}
-                            onChange={(e) => updateChapter(chapter.id, { chapter_number: parseFloat(e.target.value) || 0 })}
-                            className="h-9"
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <Label className="text-xs text-muted-foreground mb-1 block">Título (opcional)</Label>
-                          <Input
-                            value={chapter.chapter_title}
-                            onChange={(e) => updateChapter(chapter.id, { chapter_title: e.target.value })}
-                            placeholder="Ex: O Início da Jornada"
-                            className="h-9"
-                          />
-                        </div>
-                      </div>
-
-                      {/* VIP per chapter */}
-                      <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
-                        <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm">
-                          <input
-                            type="checkbox"
-                            checked={chapter.is_vip}
-                            onChange={(e) => updateChapter(chapter.id, { is_vip: e.target.checked })}
-                            className="h-4 w-4 accent-primary"
-                          />
-                          <span className="font-semibold">👑 VIP</span>
-                        </label>
-                        {chapter.is_vip && (
-                          <div className="flex-1">
-                            <Label className="text-[10px] text-muted-foreground mb-1 block">
-                              Desbloqueio automático (vazio = permanente)
-                            </Label>
-                            <div className="flex gap-1.5">
-                              <Input
-                                type="datetime-local"
-                                value={chapter.vip_unlock_at}
-                                min={toLocalDatetimeInput()}
-                                onChange={(e) => updateChapter(chapter.id, { vip_unlock_at: e.target.value })}
-                                className="h-8 text-xs flex-1"
-                              />
-                              {chapter.vip_unlock_at && (
-                                <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => updateChapter(chapter.id, { vip_unlock_at: '' })}>
-                                  Limpar
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Progress */}
-                      {chapter.isUploading && (
-                        <Progress value={chapter.uploadProgress} className="h-1.5" />
-                      )}
-
-                      {/* Image Count */}
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <ImageIcon className="h-4 w-4" />
-                        <span>{chapter.images.length} páginas</span>
-                      </div>
-
-                      {/* Images Preview */}
-                      {showPreview && chapter.images.length > 0 && (
-                        <ScrollArea className="h-[120px]">
-                          <div className="flex gap-2 pb-2">
-                            {chapter.images.map((img, imgIndex) => (
-                              <div 
-                                key={imgIndex} 
-                                className="relative flex-shrink-0 group"
-                              >
-                                <img
-                                  src={img}
-                                  alt={`Página ${imgIndex + 1}`}
-                                  className="h-[100px] w-auto rounded-lg object-cover border border-border"
-                                />
-                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
-                                  <Button
-                                    variant="destructive"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => removeImage(chapter.id, imgIndex)}
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </Button>
-                                </div>
-                                <span className="absolute bottom-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
-                                  {imgIndex + 1}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      )}
-                    </div>
-
-                    {/* Delete Button */}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeChapter(chapter.id)}
-                      className="text-muted-foreground hover:text-destructive h-8 w-8 flex-shrink-0"
-                      disabled={chapter.isUploading}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+            <div className="space-y-2">
+              {chapters.map(chapter => (
+                <ChapterCard
+                  key={chapter.id}
+                  chapter={chapter}
+                  showPreview={showAllPreviews}
+                  onUpdate={updates => updateChapter(chapter.id, updates)}
+                  onRemove={() => removeChapter(chapter.id)}
+                  onRemoveImage={idx => removeImage(chapter.id, idx)}
+                  onRetry={() => retryChapter(chapter)}
+                />
+              ))}
+            </div>
+          </>
         )}
 
-        {/* Bottom Submit Button (Mobile) */}
-        {chapters.length > 0 && (
-          <div className="mt-6 sm:hidden">
-            <Button 
-              onClick={handleSubmitAll}
-              disabled={isProcessing || !titleId || validChaptersCount === 0 || isAnyUploading}
-              className="w-full"
-            >
-              {isProcessing ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4 mr-2" />
-              )}
-              Enviar {validChaptersCount} Capítulo(s)
-            </Button>
+        {/* Empty state */}
+        {chapters.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground">
+            <FolderOpen className="h-10 w-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Nenhum capítulo adicionado ainda</p>
           </div>
         )}
       </div>
+
+      {/* ── Sticky bottom bar ── */}
+      {chapters.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur border-t border-border/50 px-4 py-3 z-20">
+          <div className="max-w-3xl mx-auto flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">
+                {validCount > 0
+                  ? `${validCount} capítulo(s) prontos para publicar`
+                  : 'Aguardando upload das imagens...'}
+              </p>
+              {isAnyUploading && (
+                <p className="text-xs text-muted-foreground">Upload em progresso — aguarde</p>
+              )}
+            </div>
+            <Button
+              onClick={handleSubmitAll}
+              disabled={isProcessing || !titleId || validCount === 0 || isAnyUploading}
+              className="shrink-0"
+            >
+              {isProcessing
+                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                : <Upload className="h-4 w-4 mr-2" />}
+              Publicar {validCount > 0 ? validCount : ''} cap.
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
+  );
+};
+
+// ─── Chapter Card ─────────────────────────────────────────────────────────────
+
+interface ChapterCardProps {
+  chapter: ChapterData;
+  showPreview: boolean;
+  onUpdate: (updates: Partial<ChapterData>) => void;
+  onRemove: () => void;
+  onRemoveImage: (idx: number) => void;
+  onRetry: () => void;
+}
+
+const statusConfig: Record<UploadStatus, { icon: React.ReactNode; border: string }> = {
+  pending:   { icon: <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />, border: '' },
+  uploading: { icon: <Loader2 className="h-4 w-4 text-primary animate-spin" />, border: 'border-primary/40' },
+  success:   { icon: <CheckCircle2 className="h-4 w-4 text-green-500" />, border: 'border-green-500/30' },
+  error:     { icon: <XCircle className="h-4 w-4 text-destructive" />, border: 'border-destructive/40' },
+};
+
+const ChapterCard = ({ chapter, showPreview, onUpdate, onRemove, onRemoveImage, onRetry }: ChapterCardProps) => {
+  const { icon, border } = statusConfig[chapter.uploadStatus];
+  const isExpanded = chapter.expanded;
+
+  return (
+    <Card className={`border transition-colors ${border || 'border-border/50'}`}>
+      <CardContent className="p-0">
+        {/* Header row */}
+        <div className="flex items-center gap-2.5 px-3 py-2.5">
+          <div className="shrink-0">{icon}</div>
+
+          {/* Chapter number */}
+          <Input
+            type="number"
+            value={chapter.chapter_number}
+            onChange={e => onUpdate({ chapter_number: parseFloat(e.target.value) || 0 })}
+            className="h-8 w-20 text-sm font-mono shrink-0"
+            disabled={chapter.isUploading}
+          />
+
+          {/* Title */}
+          <Input
+            value={chapter.chapter_title}
+            onChange={e => onUpdate({ chapter_title: e.target.value })}
+            placeholder="Título (opcional)"
+            className="h-8 text-sm flex-1 min-w-0"
+            disabled={chapter.isUploading}
+          />
+
+          {/* Image count badge */}
+          <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+            <ImageIcon className="h-3.5 w-3.5" />
+            <span>{chapter.images.length}</span>
+          </div>
+
+          {/* VIP toggle */}
+          <button
+            onClick={() => onUpdate({ is_vip: !chapter.is_vip })}
+            className={`shrink-0 p-1 rounded-md transition-colors ${chapter.is_vip ? 'text-amber-500 bg-amber-500/10' : 'text-muted-foreground/40 hover:text-muted-foreground'}`}
+            title="Marcar como VIP"
+          >
+            <Crown className="h-4 w-4" />
+          </button>
+
+          {/* Expand toggle */}
+          <button
+            onClick={() => onUpdate({ expanded: !isExpanded })}
+            className="shrink-0 p-1 rounded-md text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          >
+            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+
+          {/* Delete */}
+          <button
+            onClick={onRemove}
+            disabled={chapter.isUploading}
+            className="shrink-0 p-1 rounded-md text-muted-foreground/40 hover:text-destructive transition-colors disabled:opacity-30"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Upload progress bar */}
+        {chapter.isUploading && (
+          <Progress value={chapter.uploadProgress} className="h-0.5 rounded-none mx-0" />
+        )}
+
+        {/* Expanded details */}
+        {isExpanded && (
+          <div className="px-3 pb-3 pt-1 border-t border-border/30 space-y-3">
+
+            {/* VIP unlock date */}
+            {chapter.is_vip && (
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1 block">
+                  Desbloqueio automático <span className="opacity-60">(vazio = VIP permanente)</span>
+                </Label>
+                <div className="flex gap-1.5">
+                  <Input
+                    type="datetime-local"
+                    value={chapter.vip_unlock_at}
+                    min={toLocalDatetimeInput()}
+                    onChange={e => onUpdate({ vip_unlock_at: e.target.value })}
+                    className="h-8 text-xs flex-1"
+                  />
+                  {chapter.vip_unlock_at && (
+                    <Button type="button" variant="outline" size="sm" className="h-8 text-xs px-2" onClick={() => onUpdate({ vip_unlock_at: '' })}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Error retry */}
+            {chapter.uploadStatus === 'error' && (
+              <Button size="sm" variant="outline" onClick={onRetry} className="h-7 text-xs text-destructive border-destructive/40">
+                <RefreshCw className="h-3 w-3 mr-1.5" />
+                Tentar novamente
+              </Button>
+            )}
+
+            {/* Image previews */}
+            {(showPreview || isExpanded) && chapter.images.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">{chapter.images.length} páginas</p>
+                <ScrollArea className="h-[100px]">
+                  <div className="flex gap-1.5 pb-1">
+                    {chapter.images.map((img, idx) => (
+                      <div key={idx} className="relative shrink-0 group">
+                        <img
+                          src={img}
+                          alt={`Página ${idx + 1}`}
+                          className="h-[88px] w-auto rounded object-cover border border-border/50"
+                        />
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center">
+                          <button onClick={() => onRemoveImage(idx)} className="p-1 bg-destructive rounded text-white">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                        <span className="absolute bottom-0.5 left-0.5 bg-black/70 text-white text-[9px] px-1 py-0.5 rounded leading-none">
+                          {idx + 1}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 };
 
