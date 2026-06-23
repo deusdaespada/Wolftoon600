@@ -1,0 +1,13 @@
+project_id = "encmakrlmutvsdzpodov"
+
+[functions.redeem-vip-code]
+verify_jwt = false
+
+[functions.notify-new-chapter]
+verify_jwt = false
+
+[functions.check-ip-block]
+verify_jwt = false
+
+[functions.serve-image]
+verify_jwt = false

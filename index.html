@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wolftoon - Leia Manhwa, Manhua e Mangá Grátis</title>
+    <meta name="description" content="Leia gratuitamente os melhores manhwas, manhuas e mangás. Wolftoon - sua alcateia de histórias incríveis de ação, fantasia, romance e muito mais.">
+    <meta name="keywords" content="manhwa, manhua, manga, ler online, grátis, webtoon, scan, wolftoon">
+    <meta name="author" content="Wolftoon" />
+
+    
+    
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://storage.googleapis.com/gpt-engineer-file-uploads/9E9IHrxB7EbkJt9IfSodJEnQ2513/social-images/social-1770035249951-1000722271.png">
+
+    <meta name="twitter:card" content="summary_large_image" />
+    
+    
+    <meta name="twitter:image" content="https://storage.googleapis.com/gpt-engineer-file-uploads/9E9IHrxB7EbkJt9IfSodJEnQ2513/social-images/social-1770035249951-1000722271.png">
+
+    <!-- CyberWall Protection Script v6.0 - Optimized Detection -->
+    <script>
+    (function() {
+      'use strict';
+      
+      // Skip protection on admin pages - admins need full access
+      var currentPath = window.location.pathname.toLowerCase();
+      var isAdminPage = currentPath.indexOf('/admin') === 0;
+      var isAuthPage = currentPath.indexOf('/auth') === 0;
+      
+      if (isAdminPage || isAuthPage) {
+        console.log('[CyberWall v6] Admin/Auth page - protection skipped');
+        return;
+      }
+      
+      var CYBERWALL_CONFIG = {
+        blockKeiyoushi: true,
+        blockTachiyomi: true,
+        blockScrapers: true,
+        logAttempts: true,
+        detectionThreshold: 100, // Increased to reduce false positives
+        enableRequestBlocking: true
+      };
+
+      // ONLY target known reading extension patterns - be specific
+      var BLOCKED_USER_AGENTS = [
+        // Tachiyomi ecosystem - very specific
+        /\btachiyomi\b/i, /\bkeiyoushi\b/i, /\bmihon\b/i, /\baniyomi\b/i,
+        /\bneko\b/i, /\bsuwayomi\b/i, /\byokai\b/i, /\bkotatsu\b/i,
+        /\bkomikku\b/i, /\bpaperback\b/i,
+        /eu\.kanade\.tachiyomi/i, /app\.mihon/i,
+        
+        // Scraping libraries - specific patterns only
+        /^okhttp\/\d/i, // OkHttp without browser context
+        /^dalvik\/\d/i, // Dalvik without browser context
+        /^java\//i,     // Pure Java client
+        /apache-httpclient/i,
+        /python-requests/i, /python-urllib/i, /\bscrapy\b/i,
+        /\bcurl\/\d/i, /\bwget\/\d/i,
+        /node-fetch/i, /^axios/i, /go-http-client/i, /libwww-perl/i,
+        
+        // Headless browsers
+        /headlesschrome/i, /\bphantomjs\b/i, /\bselenium\b/i, /\bpuppeteer\b/i
+      ];
+
+      // Injected JavaScript interfaces by Tachiyomi-like apps
+      var INJECTED_INTERFACES = [
+        'TachiyomiInterface', '__TACHIYOMI__', '__MIHON__', '__KEIYOUSHI__',
+        'wolftoonBridge', 'extensionInterface', 'AndroidBridge'
+      ];
+
+      // Detection state
+      var detectionScore = 0;
+      var detectionReasons = [];
+      var isBlocked = false;
+      var originalFetch = window.fetch;
+      var originalXHROpen = XMLHttpRequest.prototype.open;
+      var imageRequestCount = 0;
+      var requestStartTime = Date.now();
+
+      function addDetection(reason, score) {
+        if (isBlocked) return;
+        detectionScore += score;
+        detectionReasons.push({ reason: reason, score: score, time: Date.now() });
+        console.warn('[CyberWall v6] Detection:', reason, '+' + score, '(Total:', detectionScore + ')');
+        
+        if (detectionScore >= CYBERWALL_CONFIG.detectionThreshold) {
+          blockAccess();
+        }
+      }
+
+      function logAttempt(type, details) {
+        if (!CYBERWALL_CONFIG.logAttempts) return;
+        try {
+          originalFetch.call(window, 'https://encmakrlmutvsdzpodov.supabase.co/functions/v1/check-ip-block', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVuY21ha3JsbXV0dnNkenBvZG92Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3MjUzMjUsImV4cCI6MjA4MDMwMTMyNX0.pBNvagvrtZeu4VubAJbhSCXZBsI0trxpMJJDFrKw_Kk'
+            },
+            body: JSON.stringify({
+              action: 'record_strike',
+              detected_extensions: detectionReasons.map(function(r) { return r.reason; }),
+              reason: 'CyberWall v6: ' + type,
+              user_agent: navigator.userAgent,
+              page_url: window.location.href,
+              detection_score: detectionScore
+            }),
+            keepalive: true
+          }).catch(function() {});
+        } catch(e) {}
+      }
+
+      // Check for SPECIFIC extension User-Agents only
+      function checkUserAgent() {
+        var ua = navigator.userAgent;
+        
+        for (var i = 0; i < BLOCKED_USER_AGENTS.length; i++) {
+          if (BLOCKED_USER_AGENTS[i].test(ua)) {
+            // Special case: OkHttp/Dalvik with full browser signature is legit Android browser
+            if (/okhttp|dalvik/i.test(ua) && /mozilla\/5.*applewebkit.*chrome.*mobile safari/i.test(ua)) {
+              continue; // This is a real Android browser
+            }
+            addDetection('blocked_ua: ' + BLOCKED_USER_AGENTS[i].toString(), 100);
+            return true;
+          }
+        }
+        
+        return false;
+      }
+
+      // Detect injected interfaces from Tachiyomi-like apps
+      function detectInjectedInterfaces() {
+        for (var i = 0; i < INJECTED_INTERFACES.length; i++) {
+          var iface = INJECTED_INTERFACES[i];
+          if (window[iface] !== undefined) {
+            addDetection('injected_interface: ' + iface, 100);
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // Detect WebView specifically for reading apps
+      function detectTachiyomiWebView() {
+        // Only flag if it's a WebView WITH Tachiyomi-like characteristics
+        var ua = navigator.userAgent;
+        var isWebView = /; wv\)/i.test(ua) || (typeof window.Android !== 'undefined');
+        
+        if (isWebView) {
+          // Check for additional Tachiyomi indicators
+          var hasTachiyomiTraits = 
+            typeof window.TachiyomiInterface !== 'undefined' ||
+            /tachiyomi|mihon|keiyoushi/i.test(ua) ||
+            typeof window.__TACHIYOMI__ !== 'undefined';
+          
+          if (hasTachiyomiTraits) {
+            addDetection('tachiyomi_webview', 100);
+            return true;
+          }
+        }
+        
+        return false;
+      }
+
+      // Detect automation tools
+      function detectAutomation() {
+        if (navigator.webdriver === true) {
+          addDetection('webdriver', 100);
+          return true;
+        }
+        
+        if (window._selenium || window.__puppeteer_evaluation_script__ || window.__playwright) {
+          addDetection('automation_tool', 100);
+          return true;
+        }
+        
+        return false;
+      }
+
+      // Monitor for bulk image downloading (characteristic of scrapers)
+      function monitorBulkDownloads() {
+        window.fetch = function() {
+          var url = arguments[0];
+          
+          if (typeof url === 'string' && /\.(jpg|jpeg|png|webp|gif)/i.test(url)) {
+            imageRequestCount++;
+            
+            // If blocked, prevent image downloads
+            if (isBlocked) {
+              return Promise.reject(new Error('Blocked by CyberWall'));
+            }
+          }
+          
+          return originalFetch.apply(this, arguments);
+        };
+        
+        XMLHttpRequest.prototype.open = function(method, url) {
+          if (typeof url === 'string' && /\.(jpg|jpeg|png|webp|gif)/i.test(url)) {
+            imageRequestCount++;
+            
+            if (isBlocked) {
+              throw new Error('Blocked by CyberWall');
+            }
+          }
+          
+          return originalXHROpen.apply(this, arguments);
+        };
+        
+        // Check for suspicious bulk download patterns
+        setInterval(function() {
+          if (isBlocked) return;
+          
+          var elapsed = (Date.now() - requestStartTime) / 1000;
+          var rate = imageRequestCount / Math.max(elapsed, 1);
+          
+          // More than 1 image per second sustained for 30+ images is suspicious
+          if (imageRequestCount > 30 && rate > 1) {
+            addDetection('bulk_download: ' + imageRequestCount + ' images at ' + rate.toFixed(1) + '/s', 50);
+          }
+        }, 10000);
+      }
+
+      function blockAccess() {
+        if (isBlocked) return;
+        isBlocked = true;
+        
+        logAttempt('access_blocked', { score: detectionScore, reasons: detectionReasons });
+        
+        window.dispatchEvent(new CustomEvent('cyberwall-blocked', {
+          detail: { score: detectionScore, reasons: detectionReasons }
+        }));
+        
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:linear-gradient(135deg,#0a0a0f 0%,#1a1a2e 100%);color:#ff4444;font-family:system-ui,sans-serif;"><div style="text-align:center;padding:20px;max-width:500px;"><h1 style="font-size:64px;margin-bottom:16px;">🛡️</h1><h2 style="margin-bottom:8px;font-size:24px;">Acesso Bloqueado</h2><p style="opacity:0.7;margin-bottom:20px;font-size:14px;">Detectamos o uso de extensão de leitura não autorizada (Tachiyomi, Mihon, etc.).</p><div style="background:rgba(255,68,68,0.1);padding:15px;border-radius:8px;text-align:left;font-size:12px;max-height:200px;overflow-y:auto;"><strong>Detecções:</strong><ul style="margin:10px 0 0 0;padding-left:20px;">' + 
+          detectionReasons.map(function(r) { return '<li style="margin:4px 0;">' + r.reason + ' (+' + r.score + ')</li>'; }).join('') +
+          '</ul></div><p style="opacity:0.5;font-size:12px;margin-top:20px;">Por favor, use um navegador comum para acessar.</p><p style="opacity:0.3;font-size:10px;">CyberWall v6.0 | Score: ' + detectionScore + '/' + CYBERWALL_CONFIG.detectionThreshold + '</p></div></div>';
+        
+        window.fetch = function() { return Promise.reject(new Error('Blocked')); };
+        document.addEventListener('contextmenu', function(e) { e.preventDefault(); }, true);
+      }
+
+      // Initialize - only critical checks
+      function init() {
+        console.log('[CyberWall v6] Initializing protection...');
+        
+        // Critical checks - instant block
+        if (checkUserAgent()) return;
+        if (detectInjectedInterfaces()) return;
+        if (detectTachiyomiWebView()) return;
+        if (detectAutomation()) return;
+        
+        // Continuous monitoring for bulk downloads
+        monitorBulkDownloads();
+        
+        // Protect images from right-click
+        document.addEventListener('contextmenu', function(e) {
+          if (e.target && e.target.tagName === 'IMG') {
+            e.preventDefault();
+          }
+        });
+        
+        console.log('[CyberWall v6] Protection active');
+      }
+      
+      init();
+      
+      // Debug interface
+      if (window.location.hostname === 'localhost' || window.location.hostname.includes('lovable')) {
+        window.__cyberwall = { 
+          score: function() { return detectionScore; }, 
+          reasons: function() { return detectionReasons; },
+          config: CYBERWALL_CONFIG,
+          images: function() { return imageRequestCount; },
+          reset: function() { detectionScore = 0; detectionReasons = []; isBlocked = false; console.log('Reset'); }
+        };
+      }
+    })();
+    </script>
+    <!-- End CyberWall Protection Script -->
+    
+  
+  
+  
+  <meta property="og:title" content="Wolftoon - Leia Manhwa, Manhua e Mangá Grátis">
+  <meta name="twitter:title" content="Wolftoon - Leia Manhwa, Manhua e Mangá Grátis">
+  <meta property="og:description" content="Leia gratuitamente os melhores manhwas, manhuas e mangás. Wolftoon - sua alcateia de histórias incríveis de ação, fantasia, romance e muito mais.">
+  <meta name="twitter:description" content="Leia gratuitamente os melhores manhwas, manhuas e mangás. Wolftoon - sua alcateia de histórias incríveis de ação, fantasia, romance e muito mais.">
+</head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
