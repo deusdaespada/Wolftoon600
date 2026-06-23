@@ -24,15 +24,13 @@ import {
   BookOpen, Star, Heart, Share2, Play, Crown,
   BookMarked, CheckCircle, Pause, Trash2, ListPlus,
   Upload, Layers, Pencil, Flag, Search, ArrowUpDown,
-  AlignLeft, MessageSquare, Image as ImageIcon, Calendar,
-  User as UserIcon, Brush, Activity, Eye,
+  AlignLeft, MessageSquare, Calendar, User as UserIcon,
+  Brush, Eye, ChevronFirst, ChevronLast, Settings,
 } from "lucide-react";
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 type Tab = 'chapters' | 'synopsis' | 'reviews';
-
-// ─── Status config ──────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<string, string> = {
   ongoing:       'Em andamento',
@@ -50,7 +48,7 @@ const STATUS_DOT: Record<string, string> = {
   cancelled:    'bg-red-500',
 };
 
-// ─── Component ─────────────────────────────────────────────────────────────────
+// ─── Component ──────────────────────────────────────────────────────────────
 
 const MangaDetails = () => {
   const { slug } = useParams();
@@ -72,14 +70,18 @@ const MangaDetails = () => {
   const [reportMessage, setReportMessage] = useState('');
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportFeedback, setReportFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
 
   const isFavorite = favorites?.includes(manga?.id || "") ?? false;
   const readingProgress = getProgressForTitle(manga?.id || "");
-  // Find first chapter number instead of hardcoding 1
-  const firstChapter = useMemo(() => {
-    if (!chapters?.length) return null;
-    return [...chapters].sort((a, b) => a.chapter_number - b.chapter_number)[0]?.chapter_number ?? null;
+
+  const sortedChapters = useMemo(() => {
+    if (!chapters?.length) return [];
+    return [...chapters].sort((a, b) => a.chapter_number - b.chapter_number);
   }, [chapters]);
+
+  const firstChapter = sortedChapters[0]?.chapter_number ?? null;
+  const lastChapter = sortedChapters[sortedChapters.length - 1]?.chapter_number ?? null;
 
   useIncrementViews(manga?.id);
 
@@ -105,7 +107,7 @@ const MangaDetails = () => {
     );
   }, [chapters, chapterQuery, sortDesc]);
 
-  // ── Loading ──────────────────────────────────────────────────────────────────
+  // ── Loading ──────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -133,7 +135,7 @@ const MangaDetails = () => {
     );
   }
 
-  // ── Derived values ───────────────────────────────────────────────────────────
+  // ── Derived values ───────────────────────────────────────────────────────
 
   const formatViews = (v: number) => {
     if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
@@ -153,7 +155,13 @@ const MangaDetails = () => {
   const statusLabel = STATUS_LABEL[statusKey] || (manga.status || '').replace(/_/g, ' ');
   const dotClass = STATUS_DOT[statusKey] || 'bg-emerald-500';
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
+  const vipCount = chapters?.filter(c => {
+    const unlockAt = (c as any).vip_unlock_at as string | null;
+    const isAutoUnlocked = unlockAt && new Date(unlockAt).getTime() <= Date.now();
+    return c.is_vip && !isAutoUnlocked;
+  }).length ?? 0;
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
 
   const handleShare = async () => {
     try {
@@ -172,7 +180,7 @@ const MangaDetails = () => {
     }
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-background pb-16">
@@ -191,7 +199,7 @@ const MangaDetails = () => {
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/40 to-background" />
         </div>
 
-        {/* Poster + title block — floats over banner */}
+        {/* Poster + title block */}
         <div className="container mx-auto px-4 max-w-4xl relative z-10 -mt-36 sm:-mt-48">
           <div className="flex flex-col sm:flex-row items-center sm:items-end gap-5">
 
@@ -271,8 +279,75 @@ const MangaDetails = () => {
 
       {/* ── PRIMARY ACTIONS ── */}
       <div className="container mx-auto px-4 max-w-4xl mt-4 space-y-2">
+
+        {/* Admin toolbar — tray acima dos botões principais */}
+        {isAdmin && (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <Settings className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">Admin</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-muted-foreground hover:bg-card/80 hover:text-foreground"
+                    >
+                      <Link to={`/manga/${manga.id}/edit`}>
+                        <Pencil className="h-3.5 w-3.5" />
+                        Editar
+                      </Link>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Editar informações da obra</TooltipContent>
+                </Tooltip>
+
+                <div className="h-4 w-px bg-border/50" />
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-muted-foreground hover:bg-card/80 hover:text-foreground"
+                    >
+                      <Link to={`/upload/chapter/${manga.id}`}>
+                        <Upload className="h-3.5 w-3.5" />
+                        Capítulo
+                      </Link>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Upload de capítulo</TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-muted-foreground hover:bg-card/80 hover:text-foreground"
+                    >
+                      <Link to={`/upload/bulk/${manga.id}`}>
+                        <Layers className="h-3.5 w-3.5" />
+                        Em massa
+                      </Link>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Upload em massa</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Read / Continue + Favorite */}
         <div className="grid grid-cols-2 gap-2">
-          {/* Read / Continue */}
           {readingProgress ? (
             <Button asChild size="lg" className="h-13 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-black text-sm shadow-lg shadow-rose-600/25">
               <Link to={`/read/${manga.id}/${readingProgress.chapter.chapter_number}`}>
@@ -294,7 +369,6 @@ const MangaDetails = () => {
             </Button>
           )}
 
-          {/* Favorite */}
           <Button
             size="lg"
             variant={isFavorite ? 'outline' : 'default'}
@@ -319,97 +393,7 @@ const MangaDetails = () => {
           </Button>
         </div>
 
-        {/* Report button */}
-        <Dialog open={reportOpen} onOpenChange={handleReportClose}>
-          <DialogTrigger asChild>
-            <Button
-              variant="ghost"
-              className="w-full h-10 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/40 text-sm font-medium"
-            >
-              <Flag className="h-3.5 w-3.5 mr-2 text-rose-400" />
-              Reportar problema
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-base">
-                <Flag className="h-4 w-4 text-rose-400" />
-                Reportar problema
-              </DialogTitle>
-              <DialogDescription>
-                Nos conta o que aconteceu com <strong>{manga.title}</strong>.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">Tipo de problema</label>
-                <Select value={reportType} onValueChange={setReportType}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="broken_chapter">Capítulo não carrega</SelectItem>
-                    <SelectItem value="wrong_info">Informação incorreta</SelectItem>
-                    <SelectItem value="missing_chapter">Capítulo faltando</SelectItem>
-                    <SelectItem value="duplicate">Obra duplicada</SelectItem>
-                    <SelectItem value="copyright">Direitos autorais</SelectItem>
-                    <SelectItem value="other">Outro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">Detalhes</label>
-                <Textarea
-                  value={reportMessage}
-                  onChange={e => setReportMessage(e.target.value)}
-                  placeholder="Descreva o problema..."
-                  className="min-h-[100px] resize-none"
-                  maxLength={500}
-                />
-                <p className="text-[10px] text-muted-foreground mt-1 text-right tabular-nums">{reportMessage.length}/500</p>
-              </div>
-              {reportFeedback && (
-                <div className={`rounded-xl border px-3 py-2.5 text-sm font-medium ${
-                  reportFeedback.type === 'success'
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                    : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-                }`}>
-                  {reportFeedback.text}
-                </div>
-              )}
-            </div>
-            <DialogFooter className="gap-2">
-              <Button variant="ghost" size="sm" onClick={() => handleReportClose(false)}>
-                {reportFeedback?.type === 'success' ? 'Fechar' : 'Cancelar'}
-              </Button>
-              <Button
-                size="sm"
-                disabled={reportSubmitting || reportMessage.trim().length < 5 || reportFeedback?.type === 'success'}
-                onClick={async () => {
-                  setReportSubmitting(true);
-                  setReportFeedback(null);
-                  const { error } = await supabase.from('title_reports').insert({
-                    title_id: manga.id,
-                    reporter_id: user?.id ?? null,
-                    report_type: reportType,
-                    message: reportMessage.trim(),
-                  });
-                  setReportSubmitting(false);
-                  if (error) {
-                    setReportFeedback({ type: 'error', text: 'Não foi possível enviar. Tente novamente.' });
-                    return;
-                  }
-                  setReportFeedback({ type: 'success', text: 'Relatório enviado — obrigado!' });
-                  setReportMessage('');
-                  toast({ title: 'Relatório enviado!' });
-                }}
-                className="bg-rose-600 hover:bg-rose-700 text-white"
-              >
-                {reportSubmitting ? 'Enviando...' : 'Enviar'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Secondary icon bar */}
+        {/* Secondary row: share + list + report */}
         <div className="flex items-center gap-2 flex-wrap">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -455,34 +439,92 @@ const MangaDetails = () => {
             </Select>
           )}
 
-          {isAdmin && (
-            <>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button asChild variant="outline" size="icon" className="rounded-xl h-10 w-10">
-                    <Link to={`/upload/chapter/${manga.id}`}><Upload className="h-4 w-4" /></Link>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Upload capítulo</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button asChild variant="outline" size="icon" className="rounded-xl h-10 w-10">
-                    <Link to={`/upload/bulk/${manga.id}`}><Layers className="h-4 w-4" /></Link>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Upload em massa</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button asChild variant="outline" size="icon" className="rounded-xl h-10 w-10">
-                    <Link to={`/manga/${manga.id}/edit`}><Pencil className="h-4 w-4" /></Link>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Editar obra</TooltipContent>
-              </Tooltip>
-            </>
-          )}
+          {/* Report */}
+          <Dialog open={reportOpen} onOpenChange={handleReportClose}>
+            <DialogTrigger asChild>
+              <Button variant="ghost" size="sm" className="ml-auto h-10 rounded-xl gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40">
+                <Flag className="h-3.5 w-3.5 text-rose-400" />
+                Reportar
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-base">
+                  <Flag className="h-4 w-4 text-rose-400" />
+                  Reportar problema
+                </DialogTitle>
+                <DialogDescription>
+                  Nos conta o que aconteceu com <strong>{manga.title}</strong>.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">Tipo de problema</label>
+                  <Select value={reportType} onValueChange={setReportType}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="broken_chapter">Capítulo não carrega</SelectItem>
+                      <SelectItem value="wrong_info">Informação incorreta</SelectItem>
+                      <SelectItem value="missing_chapter">Capítulo faltando</SelectItem>
+                      <SelectItem value="duplicate">Obra duplicada</SelectItem>
+                      <SelectItem value="copyright">Direitos autorais</SelectItem>
+                      <SelectItem value="other">Outro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">Detalhes</label>
+                  <Textarea
+                    value={reportMessage}
+                    onChange={e => setReportMessage(e.target.value)}
+                    placeholder="Descreva o problema..."
+                    className="min-h-[100px] resize-none"
+                    maxLength={500}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1 text-right tabular-nums">{reportMessage.length}/500</p>
+                </div>
+                {reportFeedback && (
+                  <div className={`rounded-xl border px-3 py-2.5 text-sm font-medium ${
+                    reportFeedback.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                  }`}>
+                    {reportFeedback.text}
+                  </div>
+                )}
+              </div>
+              <DialogFooter className="gap-2">
+                <Button variant="ghost" size="sm" onClick={() => handleReportClose(false)}>
+                  {reportFeedback?.type === 'success' ? 'Fechar' : 'Cancelar'}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={reportSubmitting || reportMessage.trim().length < 5 || reportFeedback?.type === 'success'}
+                  onClick={async () => {
+                    setReportSubmitting(true);
+                    setReportFeedback(null);
+                    const { error } = await supabase.from('title_reports').insert({
+                      title_id: manga.id,
+                      reporter_id: user?.id ?? null,
+                      report_type: reportType,
+                      message: reportMessage.trim(),
+                    });
+                    setReportSubmitting(false);
+                    if (error) {
+                      setReportFeedback({ type: 'error', text: 'Não foi possível enviar. Tente novamente.' });
+                      return;
+                    }
+                    setReportFeedback({ type: 'success', text: 'Relatório enviado — obrigado!' });
+                    setReportMessage('');
+                    toast({ title: 'Relatório enviado!' });
+                  }}
+                  className="bg-rose-600 hover:bg-rose-700 text-white"
+                >
+                  {reportSubmitting ? 'Enviando...' : 'Enviar'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -511,6 +553,35 @@ const MangaDetails = () => {
         {/* ── Chapters ── */}
         {tab === 'chapters' && (
           <>
+            {/* Jump buttons + sort */}
+            {chapters && chapters.length > 0 && (
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  className="h-10 rounded-xl gap-2 text-sm font-semibold border-border/50 hover:bg-muted/40"
+                >
+                  <Link to={firstChapter !== null ? `/read/${manga.id}/${firstChapter}` : '#'}>
+                    <ChevronFirst className="h-4 w-4" />
+                    Primeiro cap.
+                  </Link>
+                </Button>
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  className="h-10 rounded-xl gap-2 text-sm font-semibold border-border/50 hover:bg-muted/40"
+                >
+                  <Link to={lastChapter !== null ? `/read/${manga.id}/${lastChapter}` : '#'}>
+                    <ChevronLast className="h-4 w-4" />
+                    Último cap.
+                  </Link>
+                </Button>
+              </div>
+            )}
+
+            {/* Search + sort */}
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -533,6 +604,16 @@ const MangaDetails = () => {
               </Button>
             </div>
 
+            {/* VIP count notice */}
+            {vipCount > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/8 border border-amber-500/20">
+                <Crown className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span className="text-xs text-amber-400/90">
+                  <strong>{vipCount}</strong> capítulo{vipCount > 1 ? 's' : ''} exclusivo{vipCount > 1 ? 's' : ''} VIP
+                </span>
+              </div>
+            )}
+
             {filteredChapters.length === 0 ? (
               <div className="text-center py-12">
                 <BookOpen className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
@@ -551,16 +632,28 @@ const MangaDetails = () => {
                       key={chapter.id}
                       to={`/read/${manga.id}/${chapter.chapter_number}`}
                       className={`
-                        flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors group
+                        flex items-center gap-3 px-3 py-3 rounded-xl border transition-colors group
                         ${isVipLocked
                           ? 'border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10'
                           : 'border-border/30 bg-card/30 hover:bg-card/60 hover:border-border/60'}
                       `}
                     >
-                      {/* Left accent bar */}
-                      <div className={`w-0.5 h-10 rounded-full shrink-0 ${isVipLocked ? 'bg-amber-500/60' : isNew ? 'bg-rose-500' : 'bg-border/40'}`} />
+                      {/* Chapter number badge */}
+                      <div className={`
+                        flex items-center justify-center w-10 h-10 rounded-lg shrink-0 text-xs font-black tabular-nums
+                        ${isVipLocked
+                          ? 'bg-amber-500/15 text-amber-400'
+                          : isNew
+                            ? 'bg-rose-500/15 text-rose-400'
+                            : 'bg-muted/60 text-muted-foreground'}
+                      `}>
+                        {isVipLocked
+                          ? <Crown className="h-4 w-4" />
+                          : chapter.chapter_number
+                        }
+                      </div>
 
-                      {/* Chapter info */}
+                      {/* Info */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-sm group-hover:text-primary transition-colors">
@@ -571,23 +664,22 @@ const MangaDetails = () => {
                               {chapter.chapter_title}
                             </span>
                           )}
+                          {isNew && !isVipLocked && (
+                            <span className="text-[10px] font-black text-rose-400 uppercase tracking-wider">Novo</span>
+                          )}
                           {isVipLocked && (
                             unlockAt
                               ? <VipCountdown unlockAt={unlockAt} variant="badge" />
                               : <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/30 text-[10px] px-1.5 py-0 gap-0.5 h-4">
-                                  <Crown className="h-2.5 w-2.5" />VIP
+                                  <Crown className="h-2.5 w-2.5 mr-0.5" />VIP
                                 </Badge>
                           )}
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
-                          {isNew
-                            ? <span className="text-rose-400 font-bold">Novo</span>
-                            : new Date(chapter.created_at).toLocaleDateString('pt-BR')
-                          }
+                          {new Date(chapter.created_at).toLocaleDateString('pt-BR')}
                         </p>
                       </div>
 
-                      {/* Arrow hint */}
                       <div className="text-muted-foreground/30 group-hover:text-primary/60 transition-colors text-lg leading-none">›</div>
                     </Link>
                   );
@@ -649,7 +741,7 @@ const MangaDetails = () => {
   );
 };
 
-// ─── Sub-components ────────────────────────────────────────────────────────────
+// ─── Sub-components ──────────────────────────────────────────────────────────
 
 const StatPill = ({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) => (
   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-card/60 backdrop-blur border border-border/40 shrink-0">
