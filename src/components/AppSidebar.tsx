@@ -16,6 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useNotifications } from "@/hooks/useNotifications";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type Item = {
   title: string;
@@ -69,7 +70,9 @@ const adminMenu: Item[] = [
 
 export function AppSidebar() {
   const { state, setOpenMobile } = useSidebar();
-  const collapsed = state === "collapsed";
+  const isMobile = useIsMobile();
+  // On mobile the sidebar renders inside a Sheet — always show expanded
+  const collapsed = !isMobile && state === "collapsed";
   const { pathname, search } = useLocation();
   const { user, isAdmin, isVip, signOut } = useAuth();
   const { unreadCount } = useNotifications();
