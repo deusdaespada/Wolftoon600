@@ -145,4 +145,3 @@ const RecentlyAddedSection = memo(({ titles }: Props) => {
 
 RecentlyAddedSection.displayName = 'RecentlyAddedSection';
 export default RecentlyAddedSection;
-ENDOFFILE
