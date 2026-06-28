@@ -55,7 +55,8 @@ const adminMenu: Item[] = [
   { title: "Moderação", url: "/admin?tab=moderation", icon: Shield },
   { title: "Denúncias", url: "/admin?tab=reports", icon: Flag },
   { title: "Estatísticas", url: "/admin?tab=stats", icon: BarChart3 },
-  { title: "Configurações", url: "/admin?tab=settings", icon: Cog },
+  { title: "Modo Manutenção", url: "/admin?tab=maintenance", icon: Cog },
+  { title: "Configurações", url: "/admin?tab=settings", icon: Settings },
 ];
 
 export function AppSidebar() {
