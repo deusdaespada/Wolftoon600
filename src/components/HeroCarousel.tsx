@@ -78,7 +78,7 @@ const HeroCarousel = ({ titles }: HeroCarouselProps) => {
             const isFav = favorites?.includes(title.id) ?? false;
             return (
               <CarouselItem key={title.id} className="pl-0 basis-full">
-                <article className="relative w-full h-[100svh] min-h-[560px] max-h-[920px] overflow-hidden">
+                <article className="relative w-full h-[58svh] min-h-[420px] md:h-[100svh] md:min-h-[560px] max-h-[920px] overflow-hidden">
                   {/* Backdrop blur layer */}
                   <img
                     src={title.cover}
@@ -101,7 +101,7 @@ const HeroCarousel = ({ titles }: HeroCarouselProps) => {
                   <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-transparent" />
 
                   {/* Content */}
-                  <div className="relative h-full container mx-auto px-4 md:px-8 flex flex-col justify-end pb-24 md:pb-28 lg:pb-32">
+                  <div className="relative h-full container mx-auto px-4 md:px-8 flex flex-col justify-end pb-14 md:pb-28 lg:pb-32">
                     <div className="max-w-2xl animate-fade-in">
                       {/* Eyebrow */}
                       <div className="flex items-center gap-2 mb-4">
@@ -114,7 +114,7 @@ const HeroCarousel = ({ titles }: HeroCarouselProps) => {
                       </div>
 
                       {/* Title */}
-                      <h1 className="font-black text-[clamp(2rem,6vw,4.75rem)] leading-[0.95] tracking-tight text-foreground mb-4 drop-shadow-[0_8px_24px_rgba(0,0,0,0.6)] line-clamp-3">
+                      <h1 className="font-black text-[clamp(1.6rem,5vw,4.75rem)] leading-[0.95] tracking-tight text-foreground mb-3 drop-shadow-[0_8px_24px_rgba(0,0,0,0.6)] line-clamp-2 md:line-clamp-3">
                         {title.title}
                       </h1>
 
@@ -142,15 +142,15 @@ const HeroCarousel = ({ titles }: HeroCarouselProps) => {
                         )}
                       </div>
 
-                      {/* Synopsis */}
+                      {/* Synopsis — hidden on mobile */}
                       {title.synopsis && (
-                        <p className="text-sm md:text-base text-foreground/75 line-clamp-3 md:line-clamp-4 mb-5 max-w-xl leading-relaxed">
+                        <p className="hidden md:block text-sm md:text-base text-foreground/75 line-clamp-3 md:line-clamp-4 mb-5 max-w-xl leading-relaxed">
                           {title.synopsis}
                         </p>
                       )}
 
                       {/* Genres */}
-                      <div className="flex flex-wrap gap-1.5 mb-6">
+                      <div className="hidden sm:flex flex-wrap gap-1.5 mb-6">
                         {title.genres.slice(0, 4).map((g) => (
                           <span
                             key={g}
@@ -162,11 +162,11 @@ const HeroCarousel = ({ titles }: HeroCarouselProps) => {
                       </div>
 
                       {/* CTAs */}
-                      <div className="flex flex-wrap items-center gap-2.5">
+                      <div className="flex flex-wrap items-center gap-2 mt-3 md:mt-0">
                         <Button
                           size="lg"
                           asChild
-                          className="h-12 px-6 rounded-full bg-primary text-primary-foreground font-black hover:bg-primary/90 shadow-xl shadow-primary/30 transition-all"
+                          className="h-10 md:h-12 px-5 md:px-6 rounded-full bg-primary text-primary-foreground font-black hover:bg-primary/90 shadow-xl shadow-primary/30 transition-all text-sm md:text-base"
                         >
                           <Link to={`/manga/${title.slug || title.id}`}>
                             <Play className="h-5 w-5 mr-1 fill-current" />
@@ -179,7 +179,7 @@ const HeroCarousel = ({ titles }: HeroCarouselProps) => {
                           onClick={() => handleFav(title.id)}
                           disabled={toggleFavorite.isPending}
                           className={cn(
-                            "h-12 px-5 rounded-full font-bold backdrop-blur-md border-white/20 bg-white/10 text-foreground hover:bg-white/20 hover:text-foreground transition-all",
+                            "h-10 md:h-12 px-4 md:px-5 rounded-full font-bold backdrop-blur-md border-white/20 bg-white/10 text-foreground hover:bg-white/20 hover:text-foreground transition-all text-sm md:text-base",
                             isFav && "bg-emerald-500/15 border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200",
                           )}
                         >
