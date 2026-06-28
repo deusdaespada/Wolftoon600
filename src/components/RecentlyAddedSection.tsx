@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Sparkles, BookOpen, Star, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowRight, Sparkles, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Title {
   id: string;
@@ -31,57 +31,54 @@ const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
 };
 const getStatus = (s: string) => STATUS_CONFIG[s] ?? { color: 'bg-emerald-400', label: s };
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 4; // 2 por linha × 2 linhas
 
-// ─── Card 16/9 com título sobreposto ─────────────────────────────────────────
+// ─── Card — 2 colunas, imagem grande, título+tipo FORA da imagem ──────────────
+// Replicando exato o KuroMangas da screenshot
 
 const NewWorksCard = memo(({ m }: { m: Title }) => {
   const status = getStatus(m.status);
 
   return (
     <Link to={`/manga/${m.slug || m.id}`} className="group block">
-      <div className="relative overflow-hidden rounded-xl bg-muted" style={{ aspectRatio: '16/9' }}>
+      {/* Imagem — aspect 3/4 para ficar bem alta como na screenshot */}
+      <div className="relative overflow-hidden rounded-2xl bg-muted" style={{ aspectRatio: '3/4' }}>
         <img
           src={m.cover}
           alt={m.title}
           loading="lazy"
           decoding="async"
-          className="absolute inset-0 h-full w-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.05]"
+          className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
         />
 
-        {/* Gradiente de baixo — onde fica o título */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent pointer-events-none" />
-
-        {/* Top badges */}
-        <div className="absolute top-2 left-2 flex items-center gap-1.5">
-          <span className="flex items-center gap-1 rounded-md bg-black/65 backdrop-blur-sm px-2 py-0.5 text-[10px] font-bold text-white leading-none">
+        {/* Status badge — canto sup esquerdo */}
+        <div className="absolute top-2.5 left-2.5">
+          <span className="flex items-center gap-1.5 rounded-lg bg-black/70 backdrop-blur-sm px-2.5 py-1 text-[11px] font-bold text-white leading-none">
             <span className={`h-1.5 w-1.5 rounded-full ${status.color} shrink-0`} />
             {status.label}
           </span>
         </div>
 
+        {/* Capítulos — canto sup direito */}
         {m.chapters !== undefined && (
-          <div className="absolute top-2 right-2">
-            <span className="flex items-center gap-1 rounded-md bg-black/65 backdrop-blur-sm px-1.5 py-0.5 text-[10px] font-black text-white leading-none">
-              <BookOpen className="h-2.5 w-2.5" />
+          <div className="absolute top-2.5 right-2.5">
+            <span className="flex items-center gap-1 rounded-lg bg-black/70 backdrop-blur-sm px-2 py-1 text-[11px] font-black text-white leading-none">
+              <BookOpen className="h-3 w-3" />
               {m.chapters}
             </span>
           </div>
         )}
 
-        {/* Título sobreposto no gradiente */}
-        <div className="absolute inset-x-0 bottom-0 p-2.5">
-          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-white/60 mb-0.5">{m.type}</p>
-          <h3 className="text-[13px] font-black leading-snug line-clamp-2 text-white drop-shadow">
-            {m.title}
-          </h3>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="flex items-center gap-0.5 text-[10px] text-white/70">
-              <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
-              {m.rating?.toFixed(1) || '0.0'}
-            </span>
-          </div>
-        </div>
+        {/* Gradiente sutil no fundo para separar dos badges se necessário */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
+      </div>
+
+      {/* Título e tipo FORA da imagem, abaixo — igual à screenshot */}
+      <div className="mt-2 px-0.5">
+        <h3 className="text-[14px] font-black leading-snug line-clamp-2 text-foreground group-hover:text-primary transition-colors">
+          {m.title}
+        </h3>
+        <p className="mt-0.5 text-[11px] text-muted-foreground font-semibold">{m.type}</p>
       </div>
     </Link>
   );
@@ -131,8 +128,8 @@ const RecentlyAddedSection = memo(({ titles }: Props) => {
         </div>
       </div>
 
-      {/* Grid 2 colunas no mobile */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-3">
+      {/* Grid 2 colunas fixo — cards grandes como na screenshot */}
+      <div className="grid grid-cols-2 gap-3">
         {pageItems.map((m) => (
           <NewWorksCard key={m.id} m={m} />
         ))}
